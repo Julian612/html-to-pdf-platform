@@ -96,7 +96,6 @@ DEFAULT_CORE_COUNT="2"
 DEFAULT_RAM_SIZE="2048"
 DEFAULT_BRG="vmbr0"
 DEFAULT_GATE=""
-DEFAULT_APT_CACHER=""
 DEFAULT_STORAGE=""
 
 # ──────────────────────────────────────────────
@@ -139,7 +138,6 @@ default_settings() {
   RAM_SIZE=$DEFAULT_RAM_SIZE
   BRG=$DEFAULT_BRG
   GATE=$DEFAULT_GATE
-  APT_CACHER=$DEFAULT_APT_CACHER
   STORAGE=$DEFAULT_STORAGE
 
   echo -e "  ${GN}CT ID:${CL}       ${YW}${CT_ID}${CL}"
@@ -254,7 +252,6 @@ build_container() {
   # Create the container
   pct create "$CT_ID" "$TEMPLATE" \
     --hostname "$HN" \
-    --storage "$STORAGE" \
     --rootfs "${STORAGE}:${DISK_SIZE}" \
     --cores "$CORE_COUNT" \
     --memory "$RAM_SIZE" \
@@ -281,7 +278,7 @@ run_install() {
   msg_info "Waiting for network"
   local max_wait=30
   local waited=0
-  while ! pct exec "$CT_ID" -- ping -c1 -W2 google.com &>/dev/null; do
+  while ! pct exec "$CT_ID" -- ping -c1 -W2 8.8.8.8 &>/dev/null; do
     sleep 2
     waited=$((waited + 2))
     if [[ $waited -ge $max_wait ]]; then
