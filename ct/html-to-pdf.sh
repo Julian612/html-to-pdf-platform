@@ -86,7 +86,6 @@ next_id() {
 # ──────────────────────────────────────────────
 APP="HTML-to-PDF"
 REPO_URL="https://github.com/Julian612/html-to-pdf-platform.git"
-INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/Julian612/html-to-pdf-platform/main/install/html-to-pdf-install.sh"
 
 # Defaults
 DEFAULT_CT_ID=$(next_id)
@@ -267,6 +266,243 @@ build_container() {
 }
 
 # ──────────────────────────────────────────────
+# Generate Install Script
+# ──────────────────────────────────────────────
+generate_install_script() {
+  cat <<'INSTALL_SCRIPT_EOF'
+#!/usr/bin/env bash
+
+# HTML-to-PDF Platform - Installation Script (embedded)
+
+set -euo pipefail
+
+GN="\033[1;92m"
+YW="\033[33m"
+RD="\033[01;31m"
+CL="\033[m"
+
+msg_info() { echo -e "  [${YW}...${CL}] $1"; }
+msg_ok()   { echo -e "  [${GN} OK${CL}] $1"; }
+msg_error(){ echo -e "  [${RD}FAIL${CL}] $1"; }
+
+APP_NAME="html-to-pdf"
+APP_DIR="/opt/html-to-pdf"
+REPO_URL="https://github.com/Julian612/html-to-pdf-platform.git"
+NODE_MAJOR=20
+APP_PORT=3000
+
+if [[ "$(id -u)" -ne 0 ]]; then
+  msg_error "This script must be run as root."
+  exit 1
+fi
+
+echo ""
+echo -e "${GN}========================================${CL}"
+echo -e "${GN}  HTML-to-PDF Platform Installer${CL}"
+echo -e "${GN}========================================${CL}"
+echo ""
+
+# 1. System Update & Base Packages
+msg_info "Updating system packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get upgrade -y -qq
+msg_ok "System packages updated"
+
+msg_info "Installing base dependencies"
+apt-get install -y -qq \
+  curl \
+  wget \
+  git \
+  gnupg2 \
+  ca-certificates \
+  lsb-release \
+  apt-transport-https \
+  software-properties-common \
+  build-essential \
+  2>/dev/null || true
+msg_ok "Base dependencies installed"
+
+# 2. Install Node.js 20 LTS
+msg_info "Installing Node.js ${NODE_MAJOR}.x LTS"
+if ! command -v node &>/dev/null || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt "$NODE_MAJOR" ]]; then
+  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - &>/dev/null
+  apt-get install -y -qq nodejs &>/dev/null
+fi
+msg_ok "Node.js $(node -v) installed"
+msg_ok "npm $(npm -v) installed"
+
+# 3. Install Chromium & Dependencies
+msg_info "Installing Chromium and dependencies for PDF rendering"
+apt-get install -y -qq \
+  chromium \
+  chromium-sandbox \
+  fonts-liberation \
+  fonts-noto-color-emoji \
+  fonts-noto-cjk \
+  fonts-freefont-ttf \
+  libappindicator3-1 \
+  libasound2 \
+  libatk-bridge2.0-0 \
+  libatk1.0-0 \
+  libcups2 \
+  libdbus-1-3 \
+  libdrm2 \
+  libgbm1 \
+  libgtk-3-0 \
+  libnspr4 \
+  libnss3 \
+  libx11-xcb1 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxrandr2 \
+  xdg-utils \
+  2>/dev/null || true
+msg_ok "Chromium installed"
+
+# Detect Chromium path
+CHROME_PATH=""
+for candidate in /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/google-chrome-stable /usr/bin/google-chrome; do
+  if [[ -x "$candidate" ]]; then
+    CHROME_PATH="$candidate"
+    break
+  fi
+done
+if [[ -z "$CHROME_PATH" ]]; then
+  msg_error "Could not find Chromium executable. PDF conversion may not work."
+  CHROME_PATH="/usr/bin/chromium"
+fi
+msg_ok "Chromium path: ${CHROME_PATH}"
+
+# 4. Clone Repository
+msg_info "Cloning HTML-to-PDF Platform"
+if [[ -d "$APP_DIR" ]]; then
+  rm -rf "$APP_DIR"
+fi
+git clone --depth 1 "$REPO_URL" "$APP_DIR" &>/dev/null
+msg_ok "Repository cloned to ${APP_DIR}"
+
+# 5. Install npm Dependencies
+msg_info "Installing npm dependencies (this may take a few minutes)"
+cd "$APP_DIR"
+npm install --production=false 2>&1 | tail -1
+msg_ok "npm dependencies installed"
+
+# 6. Configure Environment
+msg_info "Configuring environment"
+API_KEY="sk_prod_$(openssl rand -hex 24)"
+
+cat > "${APP_DIR}/.env" <<ENVEOF
+# HTML-to-PDF Platform Configuration
+# Generated during installation
+
+# API authentication key
+API_KEY=${API_KEY}
+
+# Path to system Chromium (for self-hosted / Proxmox deployment)
+CHROME_PATH=${CHROME_PATH}
+
+# Set to 'selfhosted' to use system Chromium instead of @sparticuz/chromium
+DEPLOYMENT_MODE=selfhosted
+
+# Optional: Rate limiting
+# RATE_LIMIT_REQUESTS=100
+# RATE_LIMIT_WINDOW_MS=3600000
+
+# Optional: Max file size in bytes (default 10MB)
+# MAX_FILE_SIZE=10485760
+
+# Server port
+PORT=${APP_PORT}
+ENVEOF
+
+msg_ok "Environment configured"
+msg_ok "API Key: ${API_KEY}"
+
+# 7. Build Application
+msg_info "Building Next.js application (this may take a while)"
+cd "$APP_DIR"
+npm run build 2>&1 | tail -3
+msg_ok "Application built successfully"
+
+# 8. Create Systemd Service
+msg_info "Creating systemd service"
+cat > /etc/systemd/system/html-to-pdf.service <<SVCEOF
+[Unit]
+Description=HTML-to-PDF Conversion Platform
+Documentation=https://github.com/Julian612/html-to-pdf-platform
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${APP_DIR}
+ExecStart=${APP_DIR}/node_modules/.bin/next start -p ${APP_PORT}
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=html-to-pdf
+
+# Environment
+EnvironmentFile=${APP_DIR}/.env
+Environment=NODE_ENV=production
+Environment=PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+Environment=PUPPETEER_EXECUTABLE_PATH=${CHROME_PATH}
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable html-to-pdf.service &>/dev/null
+msg_ok "Systemd service created and enabled"
+
+# 9. Start Service
+msg_info "Starting HTML-to-PDF service"
+systemctl start html-to-pdf.service
+sleep 3
+
+if systemctl is-active --quiet html-to-pdf.service; then
+  msg_ok "Service is running"
+else
+  msg_error "Service failed to start. Check: journalctl -u html-to-pdf -n 50"
+fi
+
+# 10. Cleanup
+msg_info "Cleaning up"
+apt-get autoremove -y -qq &>/dev/null
+apt-get clean &>/dev/null
+msg_ok "Cleanup complete"
+
+# Done
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+echo ""
+echo -e "${GN}========================================${CL}"
+echo -e "${GN}  Installation Complete!${CL}"
+echo -e "${GN}========================================${CL}"
+echo ""
+echo -e "  Web Interface:  ${GN}http://${IP}:${APP_PORT}${CL}"
+echo -e "  API Endpoint:   ${GN}http://${IP}:${APP_PORT}/api/convert${CL}"
+echo -e "  API Docs:       ${GN}http://${IP}:${APP_PORT}/api-docs${CL}"
+echo ""
+echo -e "  API Key:        ${YW}${API_KEY}${CL}"
+echo -e "  Config File:    ${YW}${APP_DIR}/.env${CL}"
+echo ""
+echo -e "  ${YW}Service Commands:${CL}"
+echo -e "    systemctl status html-to-pdf"
+echo -e "    systemctl restart html-to-pdf"
+echo -e "    journalctl -u html-to-pdf -f"
+echo ""
+INSTALL_SCRIPT_EOF
+}
+
+# ──────────────────────────────────────────────
 # Run Install Script Inside Container
 # ──────────────────────────────────────────────
 run_install() {
@@ -289,22 +525,18 @@ run_install() {
   done
   msg_ok "Network is up"
 
-  msg_info "Downloading installation script"
+  msg_info "Preparing installation script"
   local TMP_SCRIPT
   TMP_SCRIPT=$(mktemp /tmp/html-to-pdf-install-XXXXXX.sh)
-  if ! wget -qO "$TMP_SCRIPT" "${INSTALL_SCRIPT_URL}"; then
-    msg_error "Failed to download installation script from ${INSTALL_SCRIPT_URL}"
-    rm -f "$TMP_SCRIPT"
-    exit 1
-  fi
-  msg_ok "Installation script downloaded"
+  generate_install_script > "$TMP_SCRIPT"
+  msg_ok "Installation script prepared"
 
   msg_info "Copying installation script into container"
   pct push "$CT_ID" "$TMP_SCRIPT" /tmp/html-to-pdf-install.sh
   rm -f "$TMP_SCRIPT"
   msg_ok "Script copied into container"
 
-  msg_info "Running installation script inside container (this will take a while)"
+  msg_info "Running installation inside container (this will take a while)"
   pct exec "$CT_ID" -- bash /tmp/html-to-pdf-install.sh
   msg_ok "Installation complete"
 }
