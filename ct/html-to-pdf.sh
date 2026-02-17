@@ -276,7 +276,7 @@ run_install() {
   msg_ok "Container started"
 
   msg_info "Waiting for network"
-  local max_wait=30
+  local max_wait=60
   local waited=0
   while ! pct exec "$CT_ID" -- ping -c1 -W2 8.8.8.8 &>/dev/null; do
     sleep 2
@@ -289,14 +289,23 @@ run_install() {
   done
   msg_ok "Network is up"
 
+  msg_info "Downloading installation script"
+  local TMP_SCRIPT
+  TMP_SCRIPT=$(mktemp /tmp/html-to-pdf-install-XXXXXX.sh)
+  if ! wget -qO "$TMP_SCRIPT" "${INSTALL_SCRIPT_URL}"; then
+    msg_error "Failed to download installation script from ${INSTALL_SCRIPT_URL}"
+    rm -f "$TMP_SCRIPT"
+    exit 1
+  fi
+  msg_ok "Installation script downloaded"
+
+  msg_info "Copying installation script into container"
+  pct push "$CT_ID" "$TMP_SCRIPT" /tmp/html-to-pdf-install.sh
+  rm -f "$TMP_SCRIPT"
+  msg_ok "Script copied into container"
+
   msg_info "Running installation script inside container (this will take a while)"
-  # Download and execute the install script inside the container
-  pct exec "$CT_ID" -- bash -c "
-    apt-get update -qq &&
-    apt-get install -y -qq wget ca-certificates &>/dev/null &&
-    wget -qO /tmp/install.sh '${INSTALL_SCRIPT_URL}' &&
-    bash /tmp/install.sh
-  "
+  pct exec "$CT_ID" -- bash /tmp/html-to-pdf-install.sh
   msg_ok "Installation complete"
 }
 
