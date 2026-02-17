@@ -1,7 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
-import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
 import { validateApiKey, validateFileSize, checkRateLimit } from '@/lib/api-utils';
+
+const isSelfHosted = process.env.DEPLOYMENT_MODE === 'selfhosted';
+
+async function getBrowserConfig() {
+  if (isSelfHosted) {
+    // Self-hosted mode: use system-installed Chromium (Proxmox LXC, Docker, bare metal)
+    const executablePath = process.env.CHROME_PATH || '/usr/bin/chromium';
+    return {
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-extensions',
+      ],
+      executablePath,
+    };
+  } else {
+    // Vercel / serverless mode: use @sparticuz/chromium
+    const chromium = (await import('@sparticuz/chromium')).default;
+    return {
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
+    };
+  }
+}
 
 export async function POST(request: NextRequest) {
   if (!validateApiKey(request)) {
@@ -36,13 +64,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const browserConfig = await getBrowserConfig();
+
     browser = await puppeteer.launch({
-      args: chromium.args,
+      args: browserConfig.args,
       defaultViewport: {
         width: 1280,
         height: 720
       },
-      executablePath: await chromium.executablePath(),
+      executablePath: browserConfig.executablePath,
       headless: true,
     });
 
