@@ -391,6 +391,8 @@ msg_ok "npm dependencies installed"
 # 6. Configure Environment
 msg_info "Configuring environment"
 API_KEY="sk_prod_$(openssl rand -hex 24)"
+ADMIN_JWT_SECRET="$(openssl rand -hex 32)"
+ADMIN_PASSWORD="$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)"
 
 cat > "${APP_DIR}/.env" <<ENVEOF
 # HTML-to-PDF Platform Configuration
@@ -405,6 +407,10 @@ CHROME_PATH=${CHROME_PATH}
 # Set to 'selfhosted' to use system Chromium instead of @sparticuz/chromium
 DEPLOYMENT_MODE=selfhosted
 
+# Admin panel configuration
+ADMIN_CONFIG_PATH=${APP_DIR}/admin.json
+ADMIN_JWT_SECRET=${ADMIN_JWT_SECRET}
+
 # Optional: Rate limiting
 # RATE_LIMIT_REQUESTS=100
 # RATE_LIMIT_WINDOW_MS=3600000
@@ -417,7 +423,43 @@ PORT=${APP_PORT}
 ENVEOF
 
 msg_ok "Environment configured"
-msg_ok "API Key: ${API_KEY}"
+
+# Generate bcrypt hash and write admin.json
+msg_info "Setting up admin account"
+ADMIN_HASH=$(node -e "
+const bcrypt = require('bcryptjs');
+bcrypt.hash('${ADMIN_PASSWORD}', 12, (err, hash) => {
+  if (err) { process.stderr.write(err.message); process.exit(1); }
+  process.stdout.write(hash);
+});
+" 2>/dev/null)
+
+node -e "
+const fs = require('fs');
+const config = {
+  adminUser: 'admin',
+  adminPasswordHash: '${ADMIN_HASH}',
+  appearance: {
+    siteTitle: 'HTML to PDF Platform',
+    logoUrl: '',
+    primaryColor: '#3b82f6',
+    description: 'Convert HTML to PDF instantly',
+    footerText: ''
+  },
+  tools: {
+    'html-to-pdf': true, 'merge-pdf': true, 'split-pdf': true, 'rotate-pdf': true,
+    'extract-pages': true, 'add-watermark': true, 'images-to-pdf': true,
+    'compress-image': true, 'resize-image': true, 'convert-image': true,
+    'rotate-image': true, 'apply-filters': true, 'zip-files': true,
+    'unzip-files': true, 'password-generator': true, 'qr-generator': true,
+    'base64-encode': true
+  },
+  api: { rateLimitRequests: 100, rateLimitWindowMs: 3600000 }
+};
+fs.writeFileSync('${APP_DIR}/admin.json', JSON.stringify(config, null, 2));
+" 2>/dev/null
+
+msg_ok "Admin account created (user: admin)"
 
 # 7. Build Application
 msg_info "Building Next.js application (this may take a while)"
@@ -488,9 +530,11 @@ echo -e "${GN}  Installation Complete!${CL}"
 echo -e "${GN}========================================${CL}"
 echo ""
 echo -e "  Web Interface:  ${GN}http://${IP}:${APP_PORT}${CL}"
+echo -e "  Admin Panel:    ${GN}http://${IP}:${APP_PORT}/admin${CL}"
 echo -e "  API Endpoint:   ${GN}http://${IP}:${APP_PORT}/api/convert${CL}"
 echo -e "  API Docs:       ${GN}http://${IP}:${APP_PORT}/api-docs${CL}"
 echo ""
+echo -e "  Admin Login:    ${YW}admin / ${ADMIN_PASSWORD}${CL}"
 echo -e "  API Key:        ${YW}${API_KEY}${CL}"
 echo -e "  Config File:    ${YW}${APP_DIR}/.env${CL}"
 echo ""
@@ -561,13 +605,15 @@ completion_msg() {
   echo -e "${GN}================================================================${CL}"
   echo ""
   echo -e "  ${BL}Web Interface:${CL}  ${GN}http://${IP}:3000${CL}"
+  echo -e "  ${BL}Admin Panel:${CL}    ${GN}http://${IP}:3000/admin${CL}"
   echo -e "  ${BL}API Endpoint:${CL}   ${GN}http://${IP}:3000/api/convert${CL}"
   echo -e "  ${BL}API Docs:${CL}       ${GN}http://${IP}:3000/api-docs${CL}"
   echo -e "  ${BL}Container ID:${CL}   ${YW}${CT_ID}${CL}"
   echo ""
-  echo -e "  ${YW}Default API Key:${CL} Check /opt/html-to-pdf/.env inside the container"
-  echo -e "  ${YW}Change it:${CL}       pct exec ${CT_ID} -- nano /opt/html-to-pdf/.env"
-  echo -e "  ${YW}Then restart:${CL}    pct exec ${CT_ID} -- systemctl restart html-to-pdf"
+  echo -e "  ${YW}Admin Credentials:${CL} admin / (see install output above)"
+  echo -e "  ${YW}API Key & Config:${CL}   pct exec ${CT_ID} -- cat /opt/html-to-pdf/.env"
+  echo -e "  ${YW}Change password:${CL}    Login at /admin → API & Sicherheit"
+  echo -e "  ${YW}Then restart:${CL}       pct exec ${CT_ID} -- systemctl restart html-to-pdf"
   echo ""
   echo -e "  ${BL}Service Management:${CL}"
   echo -e "    pct exec ${CT_ID} -- systemctl status html-to-pdf"
