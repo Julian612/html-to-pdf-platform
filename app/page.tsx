@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ToolCard } from '@/components/tool-card';
 import { ToolDialog } from '@/components/tool-dialog';
 import { NavigationMenu } from '@/components/navigation-menu';
@@ -8,9 +8,36 @@ import { tools, Tool } from '@/lib/tools-config';
 import { motion } from 'framer-motion';
 import { FileText, Mail, Globe, Sparkles, Code, Zap, ArrowRight } from 'lucide-react';
 
+interface PublicConfig {
+  appearance: {
+    siteTitle: string;
+    logoUrl: string;
+    primaryColor: string;
+    description: string;
+    footerText: string;
+  };
+  tools: Record<string, boolean>;
+}
+
 export default function Home() {
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [config, setConfig] = useState<PublicConfig | null>(null);
+
+  useEffect(() => {
+    fetch('/api/public-config')
+      .then(r => r.json())
+      .then(setConfig)
+      .catch(() => {});
+  }, []);
+
+  const visibleTools = config?.tools
+    ? tools.filter(t => config.tools[t.id] !== false)
+    : tools;
+
+  const siteTitle = config?.appearance?.siteTitle || 'PDFTools';
+  const description = config?.appearance?.description || 'Your favorite PDF tools in one place. All tools are 100% free and easy to use.';
+  const footerText = config?.appearance?.footerText || '© 2025 PDFTools. All rights reserved.';
 
   const handleToolClick = (tool: Tool) => {
     setSelectedTool(tool);
@@ -31,7 +58,7 @@ export default function Home() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-fuchsia-400 bg-clip-text text-transparent">
-                  PDFTools
+                  {siteTitle}
                 </h1>
                 <p className="text-xs text-muted-foreground">Premium Edition</p>
               </div>
@@ -67,8 +94,8 @@ export default function Home() {
             </h2>
 
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              Your favorite PDF tools in one place. All tools are 100% free and easy to use.
-              Process files directly in your browser - no uploads required.
+              {description}
+              {' '}Process files directly in your browser - no uploads required.
             </p>
           </motion.div>
 
@@ -78,7 +105,7 @@ export default function Home() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 lg:gap-6"
           >
-            {tools.map((tool, index) => (
+            {visibleTools.map((tool, index) => (
               <ToolCard
                 key={tool.id}
                 tool={tool}
@@ -157,7 +184,7 @@ export default function Home() {
             >
               <div className="text-center mb-12">
                 <h3 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
-                  About PDFTools
+                  About {siteTitle}
                 </h3>
                 <div className="w-20 h-1 bg-gradient-to-r from-purple-500 to-fuchsia-500 mx-auto rounded-full"></div>
               </div>
@@ -217,7 +244,7 @@ export default function Home() {
                   <FileText className="w-5 h-5 text-white" />
                 </div>
                 <span className="text-sm text-muted-foreground">
-                  © 2025 PDFTools. All rights reserved.
+                  {footerText}
                 </span>
               </div>
               <div className="flex items-center gap-6">
